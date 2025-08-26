@@ -2,3 +2,6 @@ weighty-vertex-464012-u4-7cd9bab1166b.json
 venv
 .playwright-browsers
 amazon_results_with_sku_sb.csv
+build
+dist
+*.spec

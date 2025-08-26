@@ -7,6 +7,14 @@ from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
+import pathlib
+import sys
+
+# === Playwright 用ブラウザパス修正 ===
+# .exe から実行された場合は _MEIPASS を参照
+base_path = pathlib.Path(getattr(sys, "_MEIPASS", "."))  # PyInstaller 一時フォルダ or カレントディレクトリ
+playwright_browsers_path = base_path / ".playwright-browsers"
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(playwright_browsers_path.resolve())
 
 AMZ = "https://www.amazon.co.jp"
 
@@ -39,7 +47,7 @@ creds = service_account.Credentials.from_service_account_file(
 )
 service = build("sheets", "v4", credentials=creds)
 
-HEADER = ["keyword", "asin", "OrganicRank", "SPRank", "SBRank"]
+HEADER = ["キーワード", "asin", "オーガニック", "スポンサープロダクト", "スポンサーブランド"]
 
 def append_google_sheet(results_json):
     """
@@ -67,11 +75,11 @@ def append_google_sheet(results_json):
     rows = []
     for item in results_json:
         rows.append([
-            item.get("keyword", ""),
+            item.get("キーワード", ""),
             item.get("asin", ""),
-            item.get("OrganicRank", "-"),
-            item.get("SPRank", "-"),
-            item.get("SBRank", "-")
+            item.get("オーガニック", "-"),
+            item.get("スポンサープロダクト", "-"),
+            item.get("スポンサーブランド", "-")
         ])
 
     # 3. Append rows
@@ -83,8 +91,6 @@ def append_google_sheet(results_json):
             insertDataOption="INSERT_ROWS",
             body={"values": rows}
         ).execute()
-
-    print(f"[INFO] Appended {len(rows)} rows to Google Sheet.")
 
 # ------------------ Helpers ------------------
 def load_sku_map(path="sku_map.csv"):
@@ -129,13 +135,13 @@ def log_to_ui(msg):
 def set_ui_busy(is_busy: bool):
     def _apply():
         if is_busy:
-            start_btn.config(state="disabled", text="Scraping...")
+            start_btn.config(state="disabled", text="スクレイピング中…")
             progress.start(10)
-            status_var.set("Scraping started, please wait…")
+            status_var.set("スクレイピングを開始しました。しばらくお待ちください…")
         else:
-            start_btn.config(state="normal", text="Start Scraping")
+            start_btn.config(state="normal", text="スクレイピングを開始")
             progress.stop()
-            status_var.set("Idle")
+            status_var.set("アイドル状態")
     root.after(0, _apply)
 
 # ------------------ Playwright context ------------------
@@ -180,7 +186,7 @@ def _card_type(card_el) -> str:
 def _get_text(el):
     return el.get_text(strip=True) if el else ""
 
-def parse_cards_from_html(html, keyword, page_index):
+def parse_cards_from_html(html, キーワード, page_index):
     soup = BeautifulSoup(html, "html.parser")
     results = []
 
@@ -196,15 +202,15 @@ def parse_cards_from_html(html, keyword, page_index):
         title_el = card.select_one("h2 a span")
         price_el = card.select_one(".a-price .a-offscreen")
 
-        overall_rank = (page_index - 1) * 60 + idx
-        if overall_rank < 1:
-            overall_rank = 1  # fix start rank
+        総合順位 = (page_index - 1) * 60 + idx
+        if 総合順位 < 1:
+            総合順位 = 1  # fix start rank
 
         row = {
-            "keyword": keyword,
+            "キーワード": キーワード,
             "page": page_index,
             "position_on_page": idx,
-            "overall_rank": overall_rank,
+            "総合順位": 総合順位,
             "asin": asin,
             "title": _get_text(title_el),
             "price": _get_text(price_el),
@@ -229,12 +235,12 @@ def parse_sb_order_from_html(html, max_links=120):
     return order
 
 # ------------------ Scraping ------------------
-async def scrape_keyword(page, kw: str, pages_to_scan: int = 2, ui_log=None):
+async def scrape_キーワード(page, kw: str, pages_to_scan: int = 2, ui_log=None):
     rows = []
     sb_asins_global = []
     await asyncio.sleep(random.uniform(0.1, 0.35))
     url = f"{AMZ}/s?k={quote_plus(kw)}"
-    await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+    await page.goto(url, wait_until="domcontentloaded", timeout=45000)
 
     for p in range(1, pages_to_scan + 1):
         try:
@@ -248,7 +254,7 @@ async def scrape_keyword(page, kw: str, pages_to_scan: int = 2, ui_log=None):
         rows.extend(page_rows)
 
         if ui_log:
-            ui_log(f"[DEBUG] {kw} | page {p} | products: {len(page_rows)}")
+            ui_log(f"[デバッグ] キーワード {kw} | ページ {p} | 商品数: {len(page_rows)}")
 
         sb_asins_global.extend(parse_sb_order_from_html(html))
 
@@ -275,8 +281,13 @@ async def scrape_keyword(page, kw: str, pages_to_scan: int = 2, ui_log=None):
 
     return rows, sb_order
 
-async def run(keywords, asin_to_sku, target_asins, target_skus,
+async def run(キーワードs, asin_to_sku, target_asins, target_skus,
               pages_to_scan=2, headless=True, ui_log=None, concurrency=8):
+    
+    base_path = pathlib.Path(getattr(sys, "_MEIPASS", "."))  # PyInstaller 一時フォルダ or カレントディレクトリ
+    playwright_browsers_path = base_path / ".playwright-browsers"
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(playwright_browsers_path.resolve())
+
     async with async_playwright() as pw:
         launch_args = dict(headless=headless, args=[
             "--disable-blink-features=AutomationControlled",
@@ -287,14 +298,14 @@ async def run(keywords, asin_to_sku, target_asins, target_skus,
 
         sem = asyncio.Semaphore(concurrency)
         all_rows = []
-        sb_by_keyword = {}
+        sb_by_キーワード = {}
 
-        async def task_for_keyword(kw):
+        async def task_for_キーワード(kw):
             async with sem:
                 ctx = await make_context(browser)
                 page = await ctx.new_page()
                 try:
-                    rows, sb_order = await scrape_keyword(page, kw, pages_to_scan=pages_to_scan, ui_log=ui_log)
+                    rows, sb_order = await scrape_キーワード(page, kw, pages_to_scan=pages_to_scan, ui_log=ui_log)
                     return kw, rows, sb_order
                 finally:
                     try:
@@ -302,12 +313,12 @@ async def run(keywords, asin_to_sku, target_asins, target_skus,
                     except:
                         pass
 
-        tasks = [asyncio.create_task(task_for_keyword(kw)) for kw in keywords]
+        tasks = [asyncio.create_task(task_for_キーワード(kw)) for kw in キーワードs]
         for coro in asyncio.as_completed(tasks):
             kw, rows, sb_order = await coro
             if rows:
                 all_rows.extend(rows)
-            sb_by_keyword[kw] = sb_order
+            sb_by_キーワード[kw] = sb_order
 
         try:
             await browser.close()
@@ -322,16 +333,16 @@ async def run(keywords, asin_to_sku, target_asins, target_skus,
     # compute ranks
     rows_by_kw = {}
     for r in all_rows:
-        rows_by_kw.setdefault(r["keyword"], []).append(r)
+        rows_by_kw.setdefault(r["キーワード"], []).append(r)
 
     for kw in rows_by_kw:
-        rows_by_kw[kw].sort(key=lambda x: x.get("overall_rank") or 10**9)
+        rows_by_kw[kw].sort(key=lambda x: x.get("総合順位") or 10**9)
 
     type_orders = {}
     for kw, rows in rows_by_kw.items():
         organic = [r["asin"] for r in rows if r.get("type") == "Organic"]
         sp      = [r["asin"] for r in rows if r.get("type") == "SP"]
-        sb      = sb_by_keyword.get(kw, [])
+        sb      = sb_by_キーワード.get(kw, [])
         type_orders[kw] = {"Organic": organic, "SP": sp, "SB": sb}
 
     def rank_in_list(lst, asin):
@@ -347,20 +358,20 @@ async def run(keywords, asin_to_sku, target_asins, target_skus,
             sku  = r.get("sku")
             is_target = (asin in target_asins) or (sku in target_skus)
 
-            r["OrganicRank"] = r.get("overall_rank")  # always set OrganicRank = overall_rank
-            r["SPRank"] = ""
-            r["SBRank"] = ""
+            r["オーガニック"] = r.get("総合順位")  # always set オーガニック = 総合順位
+            r["スポンサープロダクト"] = ""
+            r["スポンサーブランド"] = ""
 
             if is_target:
                 if r.get("type") == "SP":
-                    sprank = rank_in_list(orders["SP"], asin)
-                    if sprank is not None: r["SPRank"] = sprank
-                sbrank = rank_in_list(orders["SB"], asin)
-                if sbrank is not None: r["SBRank"] = sbrank
+                    スポンサープロダクト = rank_in_list(orders["SP"], asin)
+                    if スポンサープロダクト is not None: r["スポンサープロダクト"] = スポンサープロダクト
+                スポンサーブランド = rank_in_list(orders["SB"], asin)
+                if スポンサーブランド is not None: r["スポンサーブランド"] = スポンサーブランド
 
     if ui_log:
         results_json = []
-        for kw in keywords:
+        for kw in キーワードs:
             orders = type_orders.get(kw, {"Organic": [], "SP": [], "SB": []})
             msg = [f"[RESULT] '{kw}':"]
             kw_rows = rows_by_kw.get(kw, [])
@@ -370,29 +381,30 @@ async def run(keywords, asin_to_sku, target_asins, target_skus,
                 sku  = r.get("sku")
                 if (asin in target_asins) or (sku in target_skus):
                     any_target = True
-                    o = r.get("OrganicRank") or "-"
-                    s = r.get("SPRank") or "-"
-                    b = r.get("SBRank") or "-"
-                    msg.append(f" Target {asin} => OrganicRank={o}, SPRank={s}, SBRank={b} (overall={r.get('overall_rank')})")
+                    o = r.get("オーガニック") or "-"
+                    s = r.get("スポンサープロダクト") or "-"
+                    b = r.get("スポンサーブランド") or "-"
+                    msg.append(f" Target {asin} => オーガニック={o}, スポンサープロダクト={s}, スポンサーブランド={b} (全体={r.get('総合順位')})")
                     results_json.append({
-                        "keyword": kw,
+                        "キーワード": kw,
                         "asin": asin,
-                        "OrganicRank": o,
-                        "SPRank": s,
-                        "SBRank": b
+                        "オーガニック": o,
+                        "スポンサープロダクト": s,
+                        "スポンサーブランド": b
                     })
+            append_google_sheet(results_json)
+            msg.append(f"[情報] Google スプレッドシートに {len(results_json)} 行を追加しました。")
             if not any_target:
-                msg.append(" target not found on scanned pages.")
+                msg.append(" スキャンしたページに対象が見つかりませんでした。")
             ui_log(" ".join(msg))
-        append_google_sheet(results_json)
 
     return all_rows
 
 def save_csv(rows, out="amazon_results_with_sku_sb.csv"):
     fields = [
-        "keyword","sku","asin","type","page","position_on_page","overall_rank",
+        "キーワード","sku","asin","type","page","position_on_page","総合順位",
         "title","price","source",
-        "OrganicRank","SPRank","SBRank"
+        "オーガニック","スポンサープロダクト","スポンサーブランド"
     ]
     with open(out, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -403,26 +415,26 @@ def save_csv(rows, out="amazon_results_with_sku_sb.csv"):
 
 # ------------------ UI ------------------
 def start_scraping_ui():
-    raw_kw = keyword_entry.get().strip()
+    raw_kw = キーワード_entry.get().strip()
     raw_sku = sku_entry.get().strip()
     if not raw_kw:
-        messagebox.showerror("Error", "Please enter at least one keyword.")
+        messagebox.showerror("エラー", "キーワードを少なくとも1つ入力してください。")
         return
     if not raw_sku:
-        messagebox.showerror("Error", "Please enter your SKU or ASIN (comma separated if multiple).")
+        messagebox.showerror("エラー", "ASINを入力してください")
         return
 
     try:
         pages = int(pages_entry.get() or 2)
     except:
         pages = 2
-    keywords = [k.strip() for k in raw_kw.split(",") if k.strip()]
+    キーワードs = [k.strip() for k in raw_kw.split(",") if k.strip()]
     inputs = [s.strip() for s in raw_sku.split(",") if s.strip()]
 
     set_ui_busy(True)
-    log_to_ui("[INFO] Scraping started, please wait…")
-    log_to_ui(f"[INFO] Keywords: {keywords} | Pages per keyword: {pages}")
-    log_to_ui(f"[INFO] Targets (raw): {inputs}")
+    log_to_ui("[情報] スクレイピングを開始しました。しばらくお待ちください…")
+    log_to_ui(f"[情報] キーワード: {キーワードs} | 各キーワードのページ数: {pages}")
+    log_to_ui(f"[情報] ターゲット（未加工）: {inputs}")
 
     asin_to_sku, sku_to_asin = load_sku_map("sku_map.csv")
 
@@ -439,27 +451,27 @@ def start_scraping_ui():
             if it in sku_to_asin:
                 target_asins.add(sku_to_asin[it])
 
-    log_to_ui(f"[INFO] Resolved target ASINs: {sorted(target_asins)}")
-    log_to_ui(f"[INFO] Resolved target SKUs: {sorted(target_skus)}")
+    log_to_ui(f"[情報] 対象ASINの確定: {sorted(target_asins)}")
+    log_to_ui(f"[情報] 対象SKUの確定: {sorted(target_skus)}")
 
     async def runner():
         try:
             rows = await run(
-                keywords,
+                キーワードs,
                 asin_to_sku,
                 target_asins=target_asins,
                 target_skus=target_skus,
                 pages_to_scan=pages,
                 headless=True,
                 ui_log=log_to_ui,
-                concurrency=min(10, max(2, len(keywords)))
+                concurrency=min(10, max(2, len(キーワードs)))
             )
             out = save_csv(rows)
-            log_to_ui(f"[INFO] Saved results to {out}")
-            messagebox.showinfo("Completed", f"Scraping finished!\nSaved to {out}")
+            log_to_ui(f"[情報] 結果を {out} に保存しました")
+            messagebox.showinfo("Completed", f"スクレイピングが終了しました！\n{out} に保存されました。")
         except Exception as e:
-            log_to_ui(f"[ERROR] {e}")
-            messagebox.showerror("Error", str(e))
+            log_to_ui(f"[エラー] {e}")
+            messagebox.showerror("エラー", str(e))
         finally:
             set_ui_busy(False)
 
@@ -467,28 +479,28 @@ def start_scraping_ui():
 
 # ------------------ Tkinter App ------------------
 root = tk.Tk()
-root.title("Amazon Rank Checker (Ultra Fast + Device Capture)")
+root.title("Amazonランキングチェッカー（超高速＋デバイスキャプチャ対応）")
 
 frm = tk.Frame(root, padx=10, pady=10)
 frm.pack(fill="both", expand=True)
 
-tk.Label(frm, text="Enter Keywords (comma separated):").grid(row=0, column=0, sticky="w")
-keyword_entry = tk.Entry(frm, width=50)
-keyword_entry.grid(row=0, column=1, sticky="we", padx=(6,0))
+tk.Label(frm, text="キーワードを入力してください（カンマ区切り）：").grid(row=0, column=0, sticky="w")
+キーワード_entry = tk.Entry(frm, width=50)
+キーワード_entry.grid(row=0, column=1, sticky="we", padx=(6,0))
 
-tk.Label(frm, text="My SKU or ASIN (comma separated):").grid(row=1, column=0, sticky="w", pady=(6,0))
+tk.Label(frm, text="あなたのSKUまたはASIN（カンマ区切り）：").grid(row=1, column=0, sticky="w", pady=(6,0))
 sku_entry = tk.Entry(frm, width=50)
 sku_entry.grid(row=1, column=1, sticky="we", padx=(6,0), pady=(6,0))
 
-tk.Label(frm, text="Pages to Scan:").grid(row=2, column=0, sticky="w")
+tk.Label(frm, text="スキャンするページ").grid(row=2, column=0, sticky="w")
 pages_entry = tk.Entry(frm, width=10)
 pages_entry.insert(0, "2")
 pages_entry.grid(row=2, column=1, sticky="w", padx=(6,0))
 
-start_btn = tk.Button(frm, text="Start Scraping", command=start_scraping_ui)
+start_btn = tk.Button(frm, text="スクレイピングを開始", command=start_scraping_ui)
 start_btn.grid(row=3, column=0, columnspan=2, pady=(10,6))
 
-status_var = tk.StringVar(value="Idle")
+status_var = tk.StringVar(value="アイドル状態")
 status_lbl = tk.Label(frm, textvariable=status_var, fg="blue")
 status_lbl.grid(row=4, column=0, sticky="w")
 
